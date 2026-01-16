@@ -117,17 +117,28 @@ The workflow uses conventional commits for automatic versioning:
 
 ## Version Handling
 
-The workflow automatically:
-1. Passes `-Pmod_version=<tag>` to Gradle
-2. Updates `mod_version` in `gradle.properties` (if present)
-3. Commits the version change back to the repo
+The workflow creates a git tag, then builds. Use the [palantir git-version](https://github.com/palantir/gradle-git-version) plugin to automatically derive the version from the tag:
 
-Your `build.gradle` should use:
+**Groovy DSL (`build.gradle`):**
 ```groovy
-version = findProperty('mod_version') ?: mod_version
+plugins {
+    id 'com.palantir.git-version' version '3.1.0'
+}
+
+version = gitVersion()
 ```
 
-This prefers the CLI argument but falls back to `gradle.properties`.
+**Kotlin DSL (`build.gradle.kts`):**
+```kotlin
+plugins {
+    id("com.palantir.git-version") version "3.1.0"
+}
+
+val gitVersion: groovy.lang.Closure<String> by extra
+version = gitVersion()
+```
+
+No manual version management needed - the plugin reads directly from git tags.
 
 ## Setup Script Requirements
 

@@ -130,12 +130,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update version in gradle.properties
-        run: |
-          if [ -f "gradle.properties" ]; then
-            sed -i.bak "s/^mod_version=.*/mod_version=${{ needs.tag_and_release.outputs.new_tag }}/" gradle.properties && rm -f gradle.properties.bak
-          fi
-
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -151,7 +145,7 @@ jobs:
       - name: Build with Gradle
         run: |
           chmod +x gradlew
-          ./gradlew build -Pmod_version=${{ needs.tag_and_release.outputs.new_tag }}
+          ./gradlew build
 
       - name: Capture Jar Name
         id: share_info
@@ -165,12 +159,6 @@ jobs:
         with:
           name: built-jar
           path: build/libs/*.jar
-
-      - name: Commit version bump back to repo
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore(version): update to ${{ needs.tag_and_release.outputs.new_tag }} [skip ci]"
-          branch: ${{ github.ref_name }}
 
   github_release:
     name: "publish (GitHub)"
