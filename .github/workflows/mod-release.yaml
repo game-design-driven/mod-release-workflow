@@ -86,7 +86,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate JSON and YAML files
-        uses: GrantBirki/json-yaml-validate@v2.4.0
+        uses: GrantBirki/json-yaml-validate@v3
+        with:
+          exclude_file: |
+            build/**
+            .gradle/**
+            .idea/**
+            run/**
+            runs/**
 
   tag_and_release:
     needs: [tests]
