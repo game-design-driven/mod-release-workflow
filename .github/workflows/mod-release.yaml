@@ -256,28 +256,20 @@ jobs:
           fi
 
       - name: Update Modrinth Description
-        if: inputs.modrinth_id != '' && steps.readme.outputs.found == 'true' && secrets.MODRINTH_TOKEN != ''
+        if: inputs.modrinth_id != '' && steps.readme.outputs.found == 'true'
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
         run: |
-          DESCRIPTION=$(cat README.md)
-          curl -s -X PATCH "https://api.modrinth.com/v2/project/${{ inputs.modrinth_id }}" \
-            -H "Authorization: ${{ secrets.MODRINTH_TOKEN }}" \
+          if [ -z "$MODRINTH_TOKEN" ]; then
+            echo "No MODRINTH_TOKEN provided, skipping"
+            exit 0
+          fi
+          curl -sf -X PATCH "https://api.modrinth.com/v2/project/${{ inputs.modrinth_id }}" \
+            -H "Authorization: $MODRINTH_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg body "$DESCRIPTION" '{body: $body}')" \
+            -d "$(jq -n --arg body "$(cat README.md)" '{body: $body}')" \
             && echo "Modrinth description updated" \
             || echo "Modrinth description update failed (non-fatal)"
-
-      - name: Update CurseForge Description
-        if: inputs.curseforge_id != '' && steps.readme.outputs.found == 'true' && secrets.CURSEFORGE_TOKEN != ''
-        run: |
-          # CurseForge uses a different API structure - requires HTML
-          # Convert markdown to basic HTML or use as-is (CF accepts markdown in some contexts)
-          DESCRIPTION=$(cat README.md)
-          curl -s -X PUT "https://minecraft.curseforge.com/api/projects/${{ inputs.curseforge_id }}/description" \
-            -H "X-Api-Token: ${{ secrets.CURSEFORGE_TOKEN }}" \
-            -H "Content-Type: text/plain" \
-            --data-binary "@README.md" \
-            && echo "CurseForge description updated" \
-            || echo "CurseForge description update failed (non-fatal)"
 
   make_pr_for_modpack:
     needs: [publish, tag_and_release]
