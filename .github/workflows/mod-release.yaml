@@ -1,0 +1,365 @@
+name: Mod Release & Downstream Sync
+concurrency:
+  group: mod-release-${{ inputs.mod_id }}
+  cancel-in-progress: false
+
+on:
+  workflow_call:
+    inputs:
+      mod_name:
+        description: 'Display name for the mod'
+        required: true
+        type: string
+      mod_id:
+        description: 'Mod identifier (usually matches jar name)'
+        required: true
+        type: string
+      mod_slug:
+        description: 'URL slug for platforms (modrinth/curseforge)'
+        required: true
+        type: string
+      loader:
+        description: 'Mod loader (forge, fabric, neoforge, quilt)'
+        required: true
+        type: string
+      mc_version:
+        description: 'Minecraft version'
+        required: true
+        type: string
+      java_version:
+        description: 'Java version for build'
+        required: false
+        type: string
+        default: '17'
+      target_modpack_repo:
+        description: 'Downstream modpack repo to PR (org/repo format)'
+        required: false
+        type: string
+        default: ''
+      dependencies:
+        description: 'mc-publish dependencies block'
+        required: false
+        type: string
+        default: ''
+      manual_bump:
+        description: 'Version bump type override'
+        required: false
+        type: string
+        default: 'patch'
+      modrinth_id:
+        description: 'Modrinth project ID'
+        required: false
+        type: string
+        default: ''
+      curseforge_id:
+        description: 'CurseForge project ID'
+        required: false
+        type: string
+        default: ''
+      enable_modrinth_sync:
+        description: 'Enable Modrinth modpack sync'
+        required: false
+        type: boolean
+        default: false
+      enable_curseforge_sync:
+        description: 'Enable CurseForge modpack sync'
+        required: false
+        type: boolean
+        default: false
+      curseforge_modpack_path:
+        description: 'Path to curseforge pack.toml in modpack repo'
+        required: false
+        type: string
+        default: './curseforge'
+    secrets:
+      GH_TOKEN:
+        description: 'GitHub token with repo access'
+        required: true
+      MODRINTH_TOKEN:
+        description: 'Modrinth API token'
+        required: false
+      CURSEFORGE_TOKEN:
+        description: 'CurseForge API token'
+        required: false
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate JSON and YAML files
+        uses: GrantBirki/json-yaml-validate@v2.4.0
+
+  tag_and_release:
+    needs: [tests]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.tag_version.outputs.new_tag }}
+      changelog: ${{ steps.tag_version.outputs.changelog }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and push tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.1
+        with:
+          tag_prefix: ""
+          default_bump: ${{ inputs.manual_bump }}
+          custom_release_rules: |
+            feat:minor:Features,
+            overhaul:minor:Overhaul,
+            fix:patch:Bug fixes,
+            refactor:patch:Refactor,
+            chore:patch:Maintenance,
+            docs:patch:Documentation,
+            test:patch:Testing,
+            ci:patch:Continuous Integration,
+            revert:patch:Reverted Changes
+          github_token: ${{ secrets.GH_TOKEN }}
+
+  build:
+    needs: [tag_and_release]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      jar_name: ${{ steps.share_info.outputs.jar_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update version files
+        run: |
+          if [ -f "./update_version.sh" ]; then
+            chmod +x ./update_version.sh
+            ./update_version.sh ${{ needs.tag_and_release.outputs.new_tag }}
+          else
+            echo "No update_version.sh found, skipping version file update"
+          fi
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ inputs.java_version }}
+          cache: 'gradle'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Build with Gradle
+        run: |
+          chmod +x gradlew
+          ./gradlew build
+
+      - name: Capture Jar Name
+        id: share_info
+        run: |
+          shopt -s extglob
+          JAR=$(ls build/libs/!(*-all|*-sources|*-javadoc).jar | xargs basename)
+          echo "jar_name=$JAR" >> $GITHUB_OUTPUT
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-jar
+          path: build/libs/*.jar
+
+      - name: Commit version bump back to repo
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(version): update to ${{ needs.tag_and_release.outputs.new_tag }} [skip ci]"
+          branch: ${{ github.ref_name }}
+
+  github_release:
+    needs: [tag_and_release, build]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built jar
+        uses: actions/download-artifact@v4
+        with:
+          name: built-jar
+          path: build/libs
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag_and_release.outputs.new_tag }}
+          name: "${{ inputs.mod_name }} v${{ needs.tag_and_release.outputs.new_tag }}"
+          body: |
+            ## ${{ inputs.mod_name }} v${{ needs.tag_and_release.outputs.new_tag }}
+
+            **Minecraft**: ${{ inputs.mc_version }}
+            **Loader**: ${{ inputs.loader }}
+
+            ### Changelog
+            ${{ needs.tag_and_release.outputs.changelog }}
+          files: build/libs/*.jar
+          token: ${{ secrets.GH_TOKEN }}
+
+  publish:
+    needs: [tag_and_release, build]
+    if: inputs.modrinth_id != '' || inputs.curseforge_id != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built jar
+        uses: actions/download-artifact@v4
+        with:
+          name: built-jar
+          path: build/libs
+
+      - name: Publish to Platforms
+        uses: Kir-Antipov/mc-publish@v3.3.0
+        with:
+          modrinth-id: ${{ inputs.modrinth_id }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          curseforge-id: ${{ inputs.curseforge_id }}
+          curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
+          loaders: ${{ inputs.loader }}
+          game-versions: ${{ inputs.mc_version }}
+          files: "build/libs/!(*-all|*-sources|*-javadoc).jar"
+          name: "${{ inputs.mod_id }}-${{ needs.tag_and_release.outputs.new_tag }}+${{ inputs.loader }}-${{ inputs.mc_version }}"
+          version: ${{ needs.tag_and_release.outputs.new_tag }}
+          version-type: release
+          changelog: ${{ needs.tag_and_release.outputs.changelog }}
+          java: ${{ inputs.java_version }}
+          dependencies: ${{ inputs.dependencies }}
+
+  update_descriptions:
+    needs: [publish]
+    if: inputs.modrinth_id != '' || inputs.curseforge_id != ''
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read README
+        id: readme
+        run: |
+          if [ -f "README.md" ]; then
+            # Store content for API calls
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Modrinth Description
+        if: inputs.modrinth_id != '' && steps.readme.outputs.found == 'true' && secrets.MODRINTH_TOKEN != ''
+        run: |
+          DESCRIPTION=$(cat README.md)
+          curl -s -X PATCH "https://api.modrinth.com/v2/project/${{ inputs.modrinth_id }}" \
+            -H "Authorization: ${{ secrets.MODRINTH_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg body "$DESCRIPTION" '{body: $body}')" \
+            && echo "Modrinth description updated" \
+            || echo "Modrinth description update failed (non-fatal)"
+
+      - name: Update CurseForge Description
+        if: inputs.curseforge_id != '' && steps.readme.outputs.found == 'true' && secrets.CURSEFORGE_TOKEN != ''
+        run: |
+          # CurseForge uses a different API structure - requires HTML
+          # Convert markdown to basic HTML or use as-is (CF accepts markdown in some contexts)
+          DESCRIPTION=$(cat README.md)
+          curl -s -X PUT "https://minecraft.curseforge.com/api/projects/${{ inputs.curseforge_id }}/description" \
+            -H "X-Api-Token: ${{ secrets.CURSEFORGE_TOKEN }}" \
+            -H "Content-Type: text/plain" \
+            --data-binary "@README.md" \
+            && echo "CurseForge description updated" \
+            || echo "CurseForge description update failed (non-fatal)"
+
+  make_pr_for_modpack:
+    needs: [publish, tag_and_release]
+    if: inputs.target_modpack_repo != '' && (inputs.enable_modrinth_sync || inputs.enable_curseforge_sync)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Modpack
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.target_modpack_repo }}
+          token: ${{ secrets.GH_TOKEN }}
+          ref: main
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '>=1.19'
+
+      - name: Install packwiz
+        run: |
+          go install github.com/packwiz/packwiz@latest
+          sudo cp $(go env GOPATH)/bin/packwiz /usr/local/bin/
+
+      - name: Create Polling script
+        run: |
+          cat << 'EOF' > poll_update.sh
+          #!/bin/bash
+          TARGET_DIR=$1
+          MOD_SLUG=$2
+          MOD_ID=$3
+          MAX_RETRIES=20
+          RETRY_INTERVAL=60
+
+          echo "Attempting to update modpack using packwiz in '$TARGET_DIR'..."
+
+          if [ -n "$TARGET_DIR" ] && [ "$TARGET_DIR" != "." ]; then
+            cd "$TARGET_DIR" || exit 1
+          fi
+
+          for ((i=1; i<=MAX_RETRIES; i++)); do
+            packwiz update "$MOD_SLUG"
+
+            if ! git diff --quiet .; then
+              echo "Success: Update found and applied for $MOD_ID ($MOD_SLUG)."
+              exit 0
+            fi
+
+            echo "Attempt $i/$MAX_RETRIES: No update found yet. Sleeping ${RETRY_INTERVAL}s..."
+            sleep $RETRY_INTERVAL
+          done
+
+          echo "Error: Timed out waiting for $MOD_ID ($MOD_SLUG) update after $((MAX_RETRIES * RETRY_INTERVAL / 60)) minutes."
+          exit 1
+          EOF
+          chmod +x ./poll_update.sh
+
+      - name: Update Modrinth Modpack
+        if: inputs.enable_modrinth_sync
+        run: ./poll_update.sh "." "${{ inputs.mod_slug }}" "${{ inputs.mod_id }}"
+
+      - name: Update Curseforge Modpack
+        if: inputs.enable_curseforge_sync
+        run: ./poll_update.sh "${{ inputs.curseforge_modpack_path }}" "${{ inputs.mod_slug }}" "${{ inputs.mod_id }}"
+
+      - name: Cleanup temp files
+        run: rm -f poll_update.sh
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+          commit-message: "mods: update ${{ inputs.mod_name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
+          title: "Update ${{ inputs.mod_name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
+          branch: "update/${{ inputs.mod_id }}"
+          body: |
+            ## Mod Update: ${{ inputs.mod_name }}
+            - **New Version**: `${{ needs.tag_and_release.outputs.new_tag }}`
+            - **Target MC**: `${{ inputs.mc_version }}`-`${{ inputs.loader }}`
+            - **Syncs Active**: Modrinth (${{ inputs.enable_modrinth_sync }}), CurseForge (${{ inputs.enable_curseforge_sync }})
+
+            ## Changelog
+            ${{ needs.tag_and_release.outputs.changelog }}
+
+            ---
+            *This PR was automatically generated by the mod-release workflow.*
