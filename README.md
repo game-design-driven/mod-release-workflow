@@ -19,39 +19,34 @@ Copy `caller-template.yaml` to your mod repo as `.github/workflows/release.yaml`
 
 ```bash
 mkdir -p .github/workflows
-cp /path/to/mod-release-workflow/caller-template.yaml .github/workflows/release.yaml
+curl -o .github/workflows/release.yaml https://raw.githubusercontent.com/game-design-driven/mod-release-workflow/main/caller-template.yaml
 ```
 
-### 2. Configure the workflow
+### 2. Create dependencies.txt (if needed)
 
-Edit `.github/workflows/release.yaml` and update the inputs:
+If your mod has dependencies, create `dependencies.txt` in your repo root with one dependency per line:
 
-```yaml
-jobs:
-  release:
-    uses: game-design-driven/mod-release-workflow/.github/workflows/mod-release.yaml@main
-    with:
-      mod_name: "Your Mod Name"
-      mod_id: "YourModId"
-      mod_slug: "your-mod-slug"
-      loader: "forge"
-      mc_version: "1.20.1"
-      # ... other inputs
 ```
+tooltips-reforged(required)
+cloth-config(required)
+modmenu(optional)
+```
+
+Format: `mod-slug(type)` where type is `required`, `optional`, `incompatible`, `embedded`, or version constraints. See [mc-publish docs](https://github.com/Kir-Antipov/mc-publish#dependencies) for full syntax.
 
 ### 3. Run the setup script
 
 From your mod repo directory:
 
 ```bash
-cd /path/to/your-mod-repo
 uv run /path/to/mod-release-workflow/setup.py
 ```
+It requires `uv`, `gh`, and `fzf` installed.
 
-The script will:
-- Detect existing org/repo variables and secrets
-- Let you choose to use existing values or set new ones
-- Configure variables and secrets at repo or org level
+The script will configure:
+- Platform IDs (Modrinth, CurseForge)
+- Modpack sync settings
+- API tokens
 
 ### 4. Push to main
 
@@ -61,19 +56,18 @@ The workflow triggers on push to `main` branch.
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `mod_name` | Yes | - | Display name for the mod |
-| `mod_id` | Yes | - | Mod identifier (usually matches jar name) |
-| `mod_slug` | Yes | - | URL slug for platforms |
 | `loader` | Yes | - | Mod loader (forge, fabric, neoforge, quilt) |
 | `mc_version` | Yes | - | Minecraft version |
 | `java_version` | No | `17` | Java version for build |
 | `modrinth_id` | No | - | Modrinth project ID |
 | `curseforge_id` | No | - | CurseForge project ID |
-| `dependencies` | No | - | mc-publish dependencies block |
+| `modrinth_slug` | No | repo name | Modrinth slug for packwiz |
+| `curseforge_slug` | No | repo name | CurseForge slug for packwiz |
 | `target_modpack_repo` | No | - | Downstream modpack repo (org/repo) |
 | `enable_modrinth_sync` | No | `false` | Enable Modrinth modpack sync |
 | `enable_curseforge_sync` | No | `false` | Enable CurseForge modpack sync |
 | `curseforge_modpack_path` | No | `./curseforge` | Path to CF pack.toml in modpack |
+| `enable_github_release` | No | `true` | Enable GitHub Release creation |
 | `manual_bump` | No | `patch` | Version bump type override |
 
 ## Secrets
@@ -90,8 +84,11 @@ Set these via GitHub UI or the setup script:
 
 | Variable | Description |
 |----------|-------------|
-| `MODRINTH_ID` | Modrinth project ID (alternative to input) |
-| `CF_ID` | CurseForge project ID (alternative to input) |
+| `MODRINTH_ID` | Modrinth project ID |
+| `CF_ID` | CurseForge project ID |
+| `TARGET_MODPACK_REPO` | Downstream modpack repo (org/repo format) |
+| `MODRINTH_SLUG` | Modrinth slug for packwiz add/update |
+| `CF_SLUG` | CurseForge slug for packwiz add/update |
 | `ENABLE_MODRINTH_SYNC` | `true`/`false` |
 | `ENABLE_CURSEFORGE_SYNC` | `true`/`false` |
 
@@ -115,7 +112,7 @@ The workflow uses conventional commits for automatic versioning:
 3. **build** - Builds with Gradle, uploads artifacts
 4. **github_release** - Creates GitHub Release with jars
 5. **publish** - Publishes to Modrinth/CurseForge
-6. **update_descriptions** - Syncs README.md to platform descriptions (non-fatal)
+6. **update_descriptions** - Syncs README.md to platform descriptions
 7. **make_pr_for_modpack** - Creates PR to update downstream modpack
 
 ## Optional: Version Update Script
@@ -125,7 +122,6 @@ If your mod repo has an `update_version.sh` script, it will be called during bui
 ```bash
 #!/bin/bash
 VERSION=$1
-# Update gradle.properties, mods.toml, etc.
 sed -i "s/^mod_version=.*/mod_version=$VERSION/" gradle.properties
 ```
 
@@ -133,16 +129,4 @@ sed -i "s/^mod_version=.*/mod_version=$VERSION/" gradle.properties
 
 - [uv](https://docs.astral.sh/uv/) - Python package manager
 - [gh](https://cli.github.com/) - GitHub CLI (authenticated)
-- [fzf](https://github.com/junegunn/fzf) - Fuzzy finder (optional, improves UX)
-
-## Directory Structure
-
-```
-mod-release-workflow/
-├── .github/
-│   └── workflows/
-│       └── mod-release.yaml    # Reusable workflow
-├── caller-template.yaml        # Template for mod repos
-├── setup.py                    # Interactive setup script
-└── README.md
-```
+- [fzf](https://github.com/junegunn/fzf) - Fuzzy finder

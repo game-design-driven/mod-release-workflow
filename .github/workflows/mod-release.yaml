@@ -1,23 +1,21 @@
 name: Mod Release & Downstream Sync
 concurrency:
-  group: mod-release-${{ inputs.mod_id }}
+  group: mod-release-${{ github.event.repository.name }}
   cancel-in-progress: false
 
 on:
   workflow_call:
     inputs:
-      mod_name:
-        description: 'Display name for the mod'
-        required: true
+      modrinth_slug:
+        description: 'Modrinth slug for packwiz (defaults to repo name lowercase)'
+        required: false
         type: string
-      mod_id:
-        description: 'Mod identifier (usually matches jar name)'
-        required: true
+        default: ''
+      curseforge_slug:
+        description: 'CurseForge slug for packwiz (defaults to repo name lowercase)'
+        required: false
         type: string
-      mod_slug:
-        description: 'URL slug for platforms (modrinth/curseforge)'
-        required: true
-        type: string
+        default: ''
       loader:
         description: 'Mod loader (forge, fabric, neoforge, quilt)'
         required: true
@@ -33,11 +31,6 @@ on:
         default: '17'
       target_modpack_repo:
         description: 'Downstream modpack repo to PR (org/repo format)'
-        required: false
-        type: string
-        default: ''
-      dependencies:
-        description: 'mc-publish dependencies block'
         required: false
         type: string
         default: ''
@@ -202,7 +195,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.tag_and_release.outputs.new_tag }}
-          name: "${{ inputs.mod_id }}-${{ needs.tag_and_release.outputs.new_tag }}+${{ inputs.loader }}-${{ inputs.mc_version }}"
+          name: "${{ github.event.repository.name }}-${{ needs.tag_and_release.outputs.new_tag }}+${{ inputs.loader }}-${{ inputs.mc_version }}"
           body: ${{ needs.tag_and_release.outputs.changelog }}
           files: build/libs/*.jar
           token: ${{ secrets.GH_TOKEN }}
@@ -221,6 +214,16 @@ jobs:
           name: built-jar
           path: build/libs
 
+      - name: Read dependencies
+        id: deps
+        run: |
+          if [ -f "dependencies.txt" ]; then
+            DEPS=$(cat dependencies.txt | tr '\n' '|' | sed 's/|$//')
+            echo "value=$DEPS" >> $GITHUB_OUTPUT
+          else
+            echo "value=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Publish to Platforms
         uses: Kir-Antipov/mc-publish@v3.3.0
         with:
@@ -231,12 +234,12 @@ jobs:
           loaders: ${{ inputs.loader }}
           game-versions: ${{ inputs.mc_version }}
           files: "build/libs/!(*-all|*-sources|*-javadoc).jar"
-          name: "${{ inputs.mod_id }}-${{ needs.tag_and_release.outputs.new_tag }}+${{ inputs.loader }}-${{ inputs.mc_version }}"
+          name: "${{ github.event.repository.name }}-${{ needs.tag_and_release.outputs.new_tag }}+${{ inputs.loader }}-${{ inputs.mc_version }}"
           version: ${{ needs.tag_and_release.outputs.new_tag }}
           version-type: release
           changelog: ${{ needs.tag_and_release.outputs.changelog }}
           java: ${{ inputs.java_version }}
-          dependencies: ${{ inputs.dependencies }}
+          dependencies: ${{ steps.deps.outputs.value }}
 
   update_descriptions:
     needs: [publish]
@@ -302,18 +305,27 @@ jobs:
           curl -sSL "https://raw.githubusercontent.com/game-design-driven/mod-release-workflow/main/scripts/sync_mod.py" -o sync_mod.py
           chmod +x sync_mod.py
 
+      - name: Compute slugs
+        id: slugs
+        run: |
+          DEFAULT=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          MR_SLUG="${{ inputs.modrinth_slug }}"
+          CF_SLUG="${{ inputs.curseforge_slug }}"
+          echo "modrinth=${MR_SLUG:-$DEFAULT}" >> $GITHUB_OUTPUT
+          echo "curseforge=${CF_SLUG:-$DEFAULT}" >> $GITHUB_OUTPUT
+
       - name: Sync Modrinth Modpack
         id: sync_mr
         if: inputs.enable_modrinth_sync
         run: |
-          uv run sync_mod.py "." "${{ inputs.mod_slug }}" "mr" \
+          uv run sync_mod.py "." "${{ steps.slugs.outputs.modrinth }}" "mr" \
             "${{ needs.tag_and_release.outputs.new_tag }}" "${{ inputs.mc_version }}" "${{ inputs.loader }}"
 
       - name: Sync Curseforge Modpack
         id: sync_cf
         if: inputs.enable_curseforge_sync
         run: |
-          uv run sync_mod.py "${{ inputs.curseforge_modpack_path }}" "${{ inputs.mod_slug }}" "cf" \
+          uv run sync_mod.py "${{ inputs.curseforge_modpack_path }}" "${{ steps.slugs.outputs.curseforge }}" "cf" \
             "${{ needs.tag_and_release.outputs.new_tag }}" "${{ inputs.mc_version }}" "${{ inputs.loader }}"
 
       - name: Get sync action
@@ -335,11 +347,11 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GH_TOKEN }}
-          commit-message: "mods: ${{ steps.check_mod.outputs.action }} ${{ inputs.mod_name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
-          title: "${{ steps.check_mod.outputs.action == 'add' && 'Add' || 'Update' }} ${{ inputs.mod_name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
-          branch: "${{ steps.check_mod.outputs.action }}/${{ inputs.mod_id }}"
+          commit-message: "mods: ${{ steps.check_mod.outputs.action }} ${{ github.event.repository.name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
+          title: "${{ steps.check_mod.outputs.action == 'add' && 'Add' || 'Update' }} ${{ github.event.repository.name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
+          branch: "${{ steps.check_mod.outputs.action }}/${{ steps.slugs.outputs.modrinth }}"
           body: |
-            ## Mod ${{ steps.check_mod.outputs.action == 'add' && 'Addition' || 'Update' }}: ${{ inputs.mod_name }}
+            ## Mod ${{ steps.check_mod.outputs.action == 'add' && 'Addition' || 'Update' }}: ${{ github.event.repository.name }}
             - **Version**: `${{ needs.tag_and_release.outputs.new_tag }}`
             - **Target MC**: `${{ inputs.mc_version }}`-`${{ inputs.loader }}`
             - **Syncs**: Modrinth (${{ inputs.enable_modrinth_sync }}), CurseForge (${{ inputs.enable_curseforge_sync }})

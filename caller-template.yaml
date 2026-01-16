@@ -20,11 +20,6 @@ jobs:
   release:
     uses: game-design-driven/mod-release-workflow/.github/workflows/mod-release.yaml@main
     with:
-      # Required - mod identity
-      mod_name: "Your Mod Name"
-      mod_id: "YourModId"
-      mod_slug: "your-mod-slug"
-
       # Required - build config
       loader: "forge"  # forge, fabric, neoforge, quilt
       mc_version: "1.20.1"
@@ -34,14 +29,15 @@ jobs:
       modrinth_id: ${{ vars.MODRINTH_ID }}
       curseforge_id: ${{ vars.CF_ID }}
 
+      # Optional - packwiz slugs for modpack sync (defaults to repo name lowercase)
+      modrinth_slug: ${{ vars.MODRINTH_SLUG }}
+      curseforge_slug: ${{ vars.CF_SLUG }}
+
       # Optional - modpack downstream PR
-      target_modpack_repo: ""  # e.g., "org/modpack-repo"
+      target_modpack_repo: ${{ vars.TARGET_MODPACK_REPO }}
       enable_modrinth_sync: ${{ vars.ENABLE_MODRINTH_SYNC == 'true' }}
       enable_curseforge_sync: ${{ vars.ENABLE_CURSEFORGE_SYNC == 'true' }}
       curseforge_modpack_path: "./curseforge"
-
-      # Optional - mc-publish dependencies
-      dependencies: ""
 
       # Bump type (from workflow_dispatch or default)
       manual_bump: ${{ inputs.manual_bump || 'patch' }}

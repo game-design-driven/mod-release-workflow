@@ -36,6 +36,9 @@ class ConfigItem:
 VARIABLES: list[ConfigItem] = [
     ConfigItem("MODRINTH_ID", "Modrinth project ID"),
     ConfigItem("CF_ID", "CurseForge project ID"),
+    ConfigItem("TARGET_MODPACK_REPO", "Downstream modpack repo (org/repo format)"),
+    ConfigItem("MODRINTH_SLUG", "Modrinth slug for packwiz add/update (defaults to repo name lowercase)"),
+    ConfigItem("CF_SLUG", "CurseForge slug for packwiz add/update (defaults to repo name lowercase)"),
     ConfigItem("ENABLE_MODRINTH_SYNC", "Enable Modrinth modpack sync (true/false)", default="false"),
     ConfigItem("ENABLE_CURSEFORGE_SYNC", "Enable CurseForge modpack sync (true/false)", default="false"),
 ]
