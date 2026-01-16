@@ -130,13 +130,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update version files
+      - name: Update version in gradle.properties
         run: |
-          if [ -f "./update_version.sh" ]; then
-            chmod +x ./update_version.sh
-            ./update_version.sh ${{ needs.tag_and_release.outputs.new_tag }}
-          else
-            echo "No update_version.sh found, skipping version file update"
+          if [ -f "gradle.properties" ]; then
+            sed -i.bak "s/^mod_version=.*/mod_version=${{ needs.tag_and_release.outputs.new_tag }}/" gradle.properties && rm -f gradle.properties.bak
           fi
 
       - name: Setup Java
@@ -154,7 +151,7 @@ jobs:
       - name: Build with Gradle
         run: |
           chmod +x gradlew
-          ./gradlew build
+          ./gradlew build -Pmod_version=${{ needs.tag_and_release.outputs.new_tag }}
 
       - name: Capture Jar Name
         id: share_info

@@ -115,15 +115,19 @@ The workflow uses conventional commits for automatic versioning:
 6. **update_descriptions** - Syncs README.md to platform descriptions
 7. **make_pr_for_modpack** - Creates PR to update downstream modpack
 
-## Optional: Version Update Script
+## Version Handling
 
-If your mod repo has an `update_version.sh` script, it will be called during build:
+The workflow automatically:
+1. Passes `-Pmod_version=<tag>` to Gradle
+2. Updates `mod_version` in `gradle.properties` (if present)
+3. Commits the version change back to the repo
 
-```bash
-#!/bin/bash
-VERSION=$1
-sed -i "s/^mod_version=.*/mod_version=$VERSION/" gradle.properties
+Your `build.gradle` should use:
+```groovy
+version = findProperty('mod_version') ?: mod_version
 ```
+
+This prefers the CLI argument but falls back to `gradle.properties`.
 
 ## Setup Script Requirements
 
