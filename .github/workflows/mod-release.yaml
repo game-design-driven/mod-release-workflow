@@ -71,6 +71,11 @@ on:
         required: false
         type: string
         default: './curseforge'
+      enable_github_release:
+        description: 'Enable GitHub release creation'
+        required: false
+        type: boolean
+        default: true
     secrets:
       GH_TOKEN:
         description: 'GitHub token with repo access'
@@ -178,7 +183,9 @@ jobs:
           branch: ${{ github.ref_name }}
 
   github_release:
+    name: "publish (GitHub)"
     needs: [tag_and_release, build]
+    if: inputs.enable_github_release
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -195,19 +202,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.tag_and_release.outputs.new_tag }}
-          name: "${{ inputs.mod_name }} v${{ needs.tag_and_release.outputs.new_tag }}"
-          body: |
-            ## ${{ inputs.mod_name }} v${{ needs.tag_and_release.outputs.new_tag }}
-
-            **Minecraft**: ${{ inputs.mc_version }}
-            **Loader**: ${{ inputs.loader }}
-
-            ### Changelog
-            ${{ needs.tag_and_release.outputs.changelog }}
+          name: "${{ inputs.mod_id }}-${{ needs.tag_and_release.outputs.new_tag }}+${{ inputs.loader }}-${{ inputs.mc_version }}"
+          body: ${{ needs.tag_and_release.outputs.changelog }}
           files: build/libs/*.jar
           token: ${{ secrets.GH_TOKEN }}
 
   publish:
+    name: "publish (${{ inputs.modrinth_id != '' && 'Modrinth' || '' }}${{ inputs.modrinth_id != '' && inputs.curseforge_id != '' && ', ' || '' }}${{ inputs.curseforge_id != '' && 'CurseForge' || '' }})"
     needs: [tag_and_release, build]
     if: inputs.modrinth_id != '' || inputs.curseforge_id != ''
     runs-on: ubuntu-latest
@@ -293,62 +294,55 @@ jobs:
           go install github.com/packwiz/packwiz@latest
           sudo cp $(go env GOPATH)/bin/packwiz /usr/local/bin/
 
-      - name: Create Polling script
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Fetch sync script
         run: |
-          cat << 'EOF' > poll_update.sh
-          #!/bin/bash
-          TARGET_DIR=$1
-          MOD_SLUG=$2
-          MOD_ID=$3
-          MAX_RETRIES=20
-          RETRY_INTERVAL=60
+          curl -sSL "https://raw.githubusercontent.com/game-design-driven/mod-release-workflow/main/scripts/sync_mod.py" -o sync_mod.py
+          chmod +x sync_mod.py
 
-          echo "Attempting to update modpack using packwiz in '$TARGET_DIR'..."
+      - name: Sync Modrinth Modpack
+        id: sync_mr
+        if: inputs.enable_modrinth_sync
+        run: |
+          uv run sync_mod.py "." "${{ inputs.mod_slug }}" "mr" \
+            "${{ needs.tag_and_release.outputs.new_tag }}" "${{ inputs.mc_version }}" "${{ inputs.loader }}"
 
-          if [ -n "$TARGET_DIR" ] && [ "$TARGET_DIR" != "." ]; then
-            cd "$TARGET_DIR" || exit 1
+      - name: Sync Curseforge Modpack
+        id: sync_cf
+        if: inputs.enable_curseforge_sync
+        run: |
+          uv run sync_mod.py "${{ inputs.curseforge_modpack_path }}" "${{ inputs.mod_slug }}" "cf" \
+            "${{ needs.tag_and_release.outputs.new_tag }}" "${{ inputs.mc_version }}" "${{ inputs.loader }}"
+
+      - name: Get sync action
+        id: check_mod
+        run: |
+          # Use action from whichever sync ran
+          if [ -n "${{ steps.sync_mr.outputs.action }}" ]; then
+            echo "action=${{ steps.sync_mr.outputs.action }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ steps.sync_cf.outputs.action }}" ]; then
+            echo "action=${{ steps.sync_cf.outputs.action }}" >> $GITHUB_OUTPUT
+          else
+            echo "action=update" >> $GITHUB_OUTPUT
           fi
 
-          for ((i=1; i<=MAX_RETRIES; i++)); do
-            packwiz update "$MOD_SLUG"
-
-            if ! git diff --quiet .; then
-              echo "Success: Update found and applied for $MOD_ID ($MOD_SLUG)."
-              exit 0
-            fi
-
-            echo "Attempt $i/$MAX_RETRIES: No update found yet. Sleeping ${RETRY_INTERVAL}s..."
-            sleep $RETRY_INTERVAL
-          done
-
-          echo "Error: Timed out waiting for $MOD_ID ($MOD_SLUG) update after $((MAX_RETRIES * RETRY_INTERVAL / 60)) minutes."
-          exit 1
-          EOF
-          chmod +x ./poll_update.sh
-
-      - name: Update Modrinth Modpack
-        if: inputs.enable_modrinth_sync
-        run: ./poll_update.sh "." "${{ inputs.mod_slug }}" "${{ inputs.mod_id }}"
-
-      - name: Update Curseforge Modpack
-        if: inputs.enable_curseforge_sync
-        run: ./poll_update.sh "${{ inputs.curseforge_modpack_path }}" "${{ inputs.mod_slug }}" "${{ inputs.mod_id }}"
-
-      - name: Cleanup temp files
-        run: rm -f poll_update.sh
+      - name: Cleanup
+        run: rm -f sync_mod.py
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GH_TOKEN }}
-          commit-message: "mods: update ${{ inputs.mod_name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
-          title: "Update ${{ inputs.mod_name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
-          branch: "update/${{ inputs.mod_id }}"
+          commit-message: "mods: ${{ steps.check_mod.outputs.action }} ${{ inputs.mod_name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
+          title: "${{ steps.check_mod.outputs.action == 'add' && 'Add' || 'Update' }} ${{ inputs.mod_name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
+          branch: "${{ steps.check_mod.outputs.action }}/${{ inputs.mod_id }}"
           body: |
-            ## Mod Update: ${{ inputs.mod_name }}
-            - **New Version**: `${{ needs.tag_and_release.outputs.new_tag }}`
+            ## Mod ${{ steps.check_mod.outputs.action == 'add' && 'Addition' || 'Update' }}: ${{ inputs.mod_name }}
+            - **Version**: `${{ needs.tag_and_release.outputs.new_tag }}`
             - **Target MC**: `${{ inputs.mc_version }}`-`${{ inputs.loader }}`
-            - **Syncs Active**: Modrinth (${{ inputs.enable_modrinth_sync }}), CurseForge (${{ inputs.enable_curseforge_sync }})
+            - **Syncs**: Modrinth (${{ inputs.enable_modrinth_sync }}), CurseForge (${{ inputs.enable_curseforge_sync }})
 
             ## Changelog
             ${{ needs.tag_and_release.outputs.changelog }}
