@@ -1,3 +1,6 @@
+<img width="1138" height="267" alt="Screenshot 2026-01-16 at 13 34 55" src="https://github.com/user-attachments/assets/8eebb722-b20b-4aff-95ca-c7ec07ecead9" />
+
+
 # mod-release-workflow
 
 Reusable GitHub Actions workflow for Minecraft mod releases. Handles versioning, building, publishing, and downstream modpack PRs.
