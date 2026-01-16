@@ -94,12 +94,27 @@ class ExistingValues:
             except (json.JSONDecodeError, KeyError):
                 return []
 
-        self.repo_secrets = {s["name"] for s in safe_json(run_cmd(["gh", "secret", "list", "--json", "name"], check=False))}
-        self.repo_vars = {v["name"]: v["value"] for v in safe_json(run_cmd(["gh", "variable", "list", "--json", "name,value"], check=False))}
+        self.repo_secrets = {
+            s["name"] for s in safe_json(run_cmd(["gh", "secret", "list", "--json", "name"], check=False))
+        }
+        self.repo_vars = {
+            v["name"]: v["value"]
+            for v in safe_json(run_cmd(["gh", "variable", "list", "--json", "name,value"], check=False))
+        }
 
         # Org secrets/vars available to this repo (doesn't require admin:org scope)
-        self.org_secrets = {s["name"] for s in safe_json(run_cmd(["gh", "api", f"repos/{org}/{repo}/actions/organization-secrets"], check=False), "secrets")}
-        self.org_vars = {v["name"]: v["value"] for v in safe_json(run_cmd(["gh", "api", f"repos/{org}/{repo}/actions/organization-variables"], check=False), "variables")}
+        self.org_secrets = {
+            s["name"]
+            for s in safe_json(
+                run_cmd(["gh", "api", f"repos/{org}/{repo}/actions/organization-secrets"], check=False), "secrets"
+            )
+        }
+        self.org_vars = {
+            v["name"]: v["value"]
+            for v in safe_json(
+                run_cmd(["gh", "api", f"repos/{org}/{repo}/actions/organization-variables"], check=False), "variables"
+            )
+        }
 
     def get(self, name: str, is_secret: bool) -> tuple[str | None, str | None]:
         """Returns (repo_value, org_value)."""
@@ -172,13 +187,11 @@ def configure_item(item: ConfigItem, org: str, cache: ExistingValues, actions: l
     at_org = "org" in choice
 
     # Get new value
-    if item.default:
-        prompt = f"Enter value [{item.default}]: "
-    else:
-        prompt = "Enter value: "
+    prompt = f"Enter value [{item.default}]: " if item.default else "Enter value: "
 
     if item.is_secret:
         import getpass
+
         value = getpass.getpass(prompt)
     else:
         value = input(prompt)
