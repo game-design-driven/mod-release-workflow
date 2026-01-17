@@ -136,6 +136,8 @@ jobs:
       jar_name: ${{ steps.share_info.outputs.jar_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Java
         uses: actions/setup-java@v4
