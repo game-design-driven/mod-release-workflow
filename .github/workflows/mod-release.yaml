@@ -6,24 +6,6 @@ concurrency:
 on:
   workflow_call:
     inputs:
-      modrinth_slug:
-        description: 'Modrinth slug for packwiz (defaults to repo name lowercase)'
-        required: false
-        type: string
-        default: ''
-      curseforge_slug:
-        description: 'CurseForge slug for packwiz (defaults to repo name lowercase)'
-        required: false
-        type: string
-        default: ''
-      loader:
-        description: 'Mod loader (forge, fabric, neoforge, quilt)'
-        required: true
-        type: string
-      mc_version:
-        description: 'Minecraft version'
-        required: true
-        type: string
       java_version:
         description: 'Java version for build'
         required: false
@@ -39,16 +21,6 @@ on:
         required: false
         type: string
         default: 'patch'
-      modrinth_id:
-        description: 'Modrinth project ID'
-        required: false
-        type: string
-        default: ''
-      curseforge_id:
-        description: 'CurseForge project ID'
-        required: false
-        type: string
-        default: ''
       enable_modrinth_sync:
         description: 'Enable Modrinth modpack sync'
         required: false
@@ -75,16 +47,18 @@ on:
         required: true
       MODRINTH_TOKEN:
         description: 'Modrinth API token'
-        required: false
+        required: true
       CURSEFORGE_TOKEN:
         description: 'CurseForge API token'
-        required: false
+        required: true
 
 jobs:
   tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
       - name: Validate JSON and YAML files
         uses: GrantBirki/json-yaml-validate@v3
         with:
@@ -94,6 +68,14 @@ jobs:
             .idea/**
             run/**
             runs/**
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+        with:
+          repository: game-design-driven/mod-release-workflow
+          ref: main
+          path: workflow
+      - name: Validate mods.toml metadata
+        run: uv run workflow/scripts/mods_toml.py
 
   tag_and_release:
     needs: [tests]
@@ -178,6 +160,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+        with:
+          repository: game-design-driven/mod-release-workflow
+          ref: main
+          path: workflow
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+      - name: Read mods.toml
+        id: meta
+        run: uv run workflow/scripts/mods_toml.py --write-outputs
 
       - name: Download built jar
         uses: actions/download-artifact@v4
@@ -189,18 +182,28 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.tag_and_release.outputs.new_tag }}
-          name: "${{ github.event.repository.name }}-${{ needs.tag_and_release.outputs.new_tag }}+${{ inputs.loader }}-${{ inputs.mc_version }}"
+          name: "${{ github.event.repository.name }}-${{ needs.tag_and_release.outputs.new_tag }}+${{ steps.meta.outputs.loader }}-${{ steps.meta.outputs.mc_version }}"
           body: ${{ needs.tag_and_release.outputs.changelog }}
           files: build/libs/*.jar
           token: ${{ secrets.GH_TOKEN }}
 
   publish:
-    name: "publish (${{ inputs.modrinth_id != '' && 'Modrinth' || '' }}${{ inputs.modrinth_id != '' && inputs.curseforge_id != '' && ', ' || '' }}${{ inputs.curseforge_id != '' && 'CurseForge' || '' }})"
+    name: "publish"
     needs: [tag_and_release, build]
-    if: inputs.modrinth_id != '' || inputs.curseforge_id != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+        with:
+          repository: game-design-driven/mod-release-workflow
+          ref: main
+          path: workflow
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+      - name: Read mods.toml
+        id: meta
+        run: uv run workflow/scripts/mods_toml.py --write-outputs
 
       - name: Download built jar
         uses: actions/download-artifact@v4
@@ -208,40 +211,39 @@ jobs:
           name: built-jar
           path: build/libs
 
-      - name: Read dependencies
-        id: deps
-        run: |
-          if [ -f "dependencies.txt" ]; then
-            DEPS=$(cat dependencies.txt | tr '\n' '|' | sed 's/|$//')
-            echo "value=$DEPS" >> $GITHUB_OUTPUT
-          else
-            echo "value=" >> $GITHUB_OUTPUT
-          fi
-
       - name: Publish to Platforms
         uses: Kir-Antipov/mc-publish@v3.3.0
         with:
-          modrinth-id: ${{ inputs.modrinth_id }}
+          modrinth-id: ${{ steps.meta.outputs.modrinth_id }}
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
-          curseforge-id: ${{ inputs.curseforge_id }}
+          curseforge-id: ${{ steps.meta.outputs.curseforge_id }}
           curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
-          loaders: ${{ inputs.loader }}
-          game-versions: ${{ inputs.mc_version }}
+          loaders: ${{ steps.meta.outputs.loader }}
+          game-versions: ${{ steps.meta.outputs.mc_version }}
           files: "build/libs/!(*-all|*-sources|*-javadoc).jar"
-          name: "${{ github.event.repository.name }}-${{ needs.tag_and_release.outputs.new_tag }}+${{ inputs.loader }}-${{ inputs.mc_version }}"
+          name: "${{ github.event.repository.name }}-${{ needs.tag_and_release.outputs.new_tag }}+${{ steps.meta.outputs.loader }}-${{ steps.meta.outputs.mc_version }}"
           version: ${{ needs.tag_and_release.outputs.new_tag }}
           version-type: release
           changelog: ${{ needs.tag_and_release.outputs.changelog }}
           java: ${{ inputs.java_version }}
-          dependencies: ${{ steps.deps.outputs.value }}
 
   update_descriptions:
     needs: [publish]
-    if: inputs.modrinth_id != '' || inputs.curseforge_id != ''
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+        with:
+          repository: game-design-driven/mod-release-workflow
+          ref: main
+          path: workflow
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+      - name: Read mods.toml
+        id: meta
+        run: uv run workflow/scripts/mods_toml.py --write-outputs
 
       - name: Read README
         id: readme
@@ -254,7 +256,7 @@ jobs:
           fi
 
       - name: Update Modrinth Description
-        if: inputs.modrinth_id != '' && steps.readme.outputs.found == 'true'
+        if: steps.readme.outputs.found == 'true'
         env:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
         run: |
@@ -262,7 +264,7 @@ jobs:
             echo "No MODRINTH_TOKEN provided, skipping"
             exit 0
           fi
-          curl -sf -X PATCH "https://api.modrinth.com/v2/project/${{ inputs.modrinth_id }}" \
+          curl -sf -X PATCH "https://api.modrinth.com/v2/project/${{ steps.meta.outputs.modrinth_id }}" \
             -H "Authorization: $MODRINTH_TOKEN" \
             -H "Content-Type: application/json" \
             -d "$(jq -n --arg body "$(cat README.md)" '{body: $body}')" \
@@ -274,12 +276,33 @@ jobs:
     if: inputs.target_modpack_repo != '' && (inputs.enable_modrinth_sync || inputs.enable_curseforge_sync)
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Mod Repo
+        uses: actions/checkout@v4
+        with:
+          path: mod-repo
+
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+        with:
+          repository: game-design-driven/mod-release-workflow
+          ref: main
+          path: workflow
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Read mods.toml
+        id: meta
+        working-directory: mod-repo
+        run: uv run ../workflow/scripts/mods_toml.py --write-outputs
+
       - name: Checkout Modpack
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.target_modpack_repo }}
           token: ${{ secrets.GH_TOKEN }}
           ref: main
+          path: modpack
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -291,36 +314,24 @@ jobs:
           go install github.com/packwiz/packwiz@latest
           sudo cp $(go env GOPATH)/bin/packwiz /usr/local/bin/
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v4
-
       - name: Fetch sync script
         run: |
-          curl -sSL "https://raw.githubusercontent.com/game-design-driven/mod-release-workflow/main/scripts/sync_mod.py" -o sync_mod.py
-          chmod +x sync_mod.py
-
-      - name: Compute slugs
-        id: slugs
-        run: |
-          DEFAULT=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
-          MR_SLUG="${{ inputs.modrinth_slug }}"
-          CF_SLUG="${{ inputs.curseforge_slug }}"
-          echo "modrinth=${MR_SLUG:-$DEFAULT}" >> $GITHUB_OUTPUT
-          echo "curseforge=${CF_SLUG:-$DEFAULT}" >> $GITHUB_OUTPUT
+          curl -sSL "https://raw.githubusercontent.com/game-design-driven/mod-release-workflow/main/scripts/sync_mod.py" -o modpack/sync_mod.py
+          chmod +x modpack/sync_mod.py
 
       - name: Sync Modrinth Modpack
         id: sync_mr
         if: inputs.enable_modrinth_sync
         run: |
-          uv run sync_mod.py "." "${{ steps.slugs.outputs.modrinth }}" "mr" \
-            "${{ needs.tag_and_release.outputs.new_tag }}" "${{ inputs.mc_version }}" "${{ inputs.loader }}"
+          uv run modpack/sync_mod.py "modpack" "${{ steps.meta.outputs.modrinth_slug }}" "mr" \
+            "${{ needs.tag_and_release.outputs.new_tag }}" "${{ steps.meta.outputs.mc_version }}" "${{ steps.meta.outputs.loader }}"
 
       - name: Sync Curseforge Modpack
         id: sync_cf
         if: inputs.enable_curseforge_sync
         run: |
-          uv run sync_mod.py "${{ inputs.curseforge_modpack_path }}" "${{ steps.slugs.outputs.curseforge }}" "cf" \
-            "${{ needs.tag_and_release.outputs.new_tag }}" "${{ inputs.mc_version }}" "${{ inputs.loader }}"
+          uv run modpack/sync_mod.py "modpack/${{ inputs.curseforge_modpack_path }}" "${{ steps.meta.outputs.curseforge_slug }}" "cf" \
+            "${{ needs.tag_and_release.outputs.new_tag }}" "${{ steps.meta.outputs.mc_version }}" "${{ steps.meta.outputs.loader }}"
 
       - name: Get sync action
         id: check_mod
@@ -335,19 +346,36 @@ jobs:
           fi
 
       - name: Cleanup
-        run: rm -f sync_mod.py
+        run: rm -f modpack/sync_mod.py
+
+      - name: Write pending mod changelog
+        env:
+          MOD_NAME: ${{ github.event.repository.name }}
+          MOD_SLUG: ${{ steps.meta.outputs.modrinth_slug }}
+          MOD_VERSION: ${{ needs.tag_and_release.outputs.new_tag }}
+          MOD_CHANGELOG: ${{ needs.tag_and_release.outputs.changelog }}
+        run: |
+          if [ ! -d "modpack/modpack-update-checker" ]; then
+            exit 0
+          fi
+          mkdir -p modpack/modpack-update-checker/pending
+          {
+            printf '## %s %s\n\n' "$MOD_NAME" "$MOD_VERSION"
+            printf '%s\n' "$MOD_CHANGELOG"
+          } > "modpack/modpack-update-checker/pending/${MOD_SLUG}-${MOD_VERSION}.md"
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GH_TOKEN }}
+          path: modpack
           commit-message: "mods: ${{ steps.check_mod.outputs.action }} ${{ github.event.repository.name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
           title: "${{ steps.check_mod.outputs.action == 'add' && 'Add' || 'Update' }} ${{ github.event.repository.name }} to ${{ needs.tag_and_release.outputs.new_tag }}"
-          branch: "${{ steps.check_mod.outputs.action }}/${{ steps.slugs.outputs.modrinth }}"
+          branch: "${{ steps.check_mod.outputs.action }}/${{ steps.meta.outputs.modrinth_slug }}"
           body: |
             ## Mod ${{ steps.check_mod.outputs.action == 'add' && 'Addition' || 'Update' }}: ${{ github.event.repository.name }}
             - **Version**: `${{ needs.tag_and_release.outputs.new_tag }}`
-            - **Target MC**: `${{ inputs.mc_version }}`-`${{ inputs.loader }}`
+            - **Target MC**: `${{ steps.meta.outputs.mc_version }}`-`${{ steps.meta.outputs.loader }}`
             - **Syncs**: Modrinth (${{ inputs.enable_modrinth_sync }}), CurseForge (${{ inputs.enable_curseforge_sync }})
 
             ## Changelog

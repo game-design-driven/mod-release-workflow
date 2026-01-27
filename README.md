@@ -25,17 +25,24 @@ mkdir -p .github/workflows
 curl -o .github/workflows/release.yaml https://raw.githubusercontent.com/game-design-driven/mod-release-workflow/main/caller-template.yaml
 ```
 
-### 2. Create dependencies.txt (if needed)
+### 2. Add required `[mc-publish]` metadata to mods.toml
 
-If your mod has dependencies, create `dependencies.txt` in your repo root with one dependency per line:
+This workflow requires a single `mods.toml` with a strict `[mc-publish]` table:
 
+```toml
+[mc-publish]
+modrinth = "AANobbMI"
+curseforge = 394468
+loader = "forge"
+mc_version = "1.20.1"
+modrinth_slug = "your-mod-slug"
+curseforge_slug = "your-mod-slug"
 ```
-tooltips-reforged(required)
-cloth-config(required)
-modmenu(optional)
-```
 
-Format: `mod-slug(type)` where type is `required`, `optional`, `incompatible`, `embedded`, or version constraints. See [mc-publish docs](https://github.com/Kir-Antipov/mc-publish#dependencies) for full syntax.
+`loader` must be `forge`.
+
+Dependencies are read directly from `mods.toml` by mc-publish. No `dependencies.txt` is used.
+Only Forge is supported; `mods.toml` is required and is the single source of metadata.
 
 ### 3. Run the setup script
 
@@ -47,7 +54,7 @@ uv run /path/to/mod-release-workflow/setup.py
 It requires `uv`, `gh`, and `fzf` installed.
 
 The script will configure:
-- Platform IDs (Modrinth, CurseForge)
+- `mods.toml` [mc-publish] metadata
 - Modpack sync settings
 - API tokens
 
@@ -59,13 +66,7 @@ The workflow triggers on push to `main` branch.
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `loader` | Yes | - | Mod loader (forge, fabric, neoforge, quilt) |
-| `mc_version` | Yes | - | Minecraft version |
 | `java_version` | No | `17` | Java version for build |
-| `modrinth_id` | No | - | Modrinth project ID |
-| `curseforge_id` | No | - | CurseForge project ID |
-| `modrinth_slug` | No | repo name | Modrinth slug for packwiz |
-| `curseforge_slug` | No | repo name | CurseForge slug for packwiz |
 | `target_modpack_repo` | No | - | Downstream modpack repo (org/repo) |
 | `enable_modrinth_sync` | No | `false` | Enable Modrinth modpack sync |
 | `enable_curseforge_sync` | No | `false` | Enable CurseForge modpack sync |
@@ -73,13 +74,15 @@ The workflow triggers on push to `main` branch.
 | `enable_github_release` | No | `true` | Enable GitHub Release creation |
 | `manual_bump` | No | `patch` | Version bump type override |
 
+Required metadata (Modrinth ID, CurseForge ID, loader, MC version, slugs) must be defined in `mods.toml` under `[mc-publish]`. Both platforms are required; the workflow fails if either is missing.
+
 ## Secrets
 
 | Secret | Required | Description |
 |--------|----------|-------------|
 | `GH_TOKEN` | Yes | GitHub PAT with repo access |
-| `MODRINTH_TOKEN` | No | Modrinth API token |
-| `CURSEFORGE_TOKEN` | No | CurseForge API token |
+| `MODRINTH_TOKEN` | Yes | Modrinth API token |
+| `CURSEFORGE_TOKEN` | Yes | CurseForge API token |
 
 ## Repository Variables
 
@@ -87,11 +90,7 @@ Set these via GitHub UI or the setup script:
 
 | Variable | Description |
 |----------|-------------|
-| `MODRINTH_ID` | Modrinth project ID |
-| `CF_ID` | CurseForge project ID |
 | `TARGET_MODPACK_REPO` | Downstream modpack repo (org/repo format) |
-| `MODRINTH_SLUG` | Modrinth slug for packwiz add/update |
-| `CF_SLUG` | CurseForge slug for packwiz add/update |
 | `ENABLE_MODRINTH_SYNC` | `true`/`false` |
 | `ENABLE_CURSEFORGE_SYNC` | `true`/`false` |
 
