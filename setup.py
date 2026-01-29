@@ -93,7 +93,10 @@ def find_mods_toml() -> Path:
 
 def read_mc_publish_table(mods_toml: Path) -> dict[str, str]:
     try:
-        data = tomllib.loads(mods_toml.read_text())
+        block_text = extract_mc_publish_block(mods_toml.read_text())
+        if block_text is None:
+            return {}
+        data = tomllib.loads(block_text)
     except tomllib.TOMLDecodeError as exc:
         sys.exit(f"ERROR: Invalid TOML in {mods_toml}: {exc}")
     table = data.get("mc-publish")
@@ -107,6 +110,8 @@ def read_mc_publish_table(mods_toml: Path) -> dict[str, str]:
 def validate_file_value(name: str, value: str) -> tuple[bool, str]:
     if not value.strip():
         return False, "value cannot be empty"
+    if "${" in value:
+        return False, "value contains a template placeholder"
     if name == "loader" and value not in ALLOWED_LOADERS:
         allowed_list = ", ".join(sorted(ALLOWED_LOADERS))
         return False, f"loader must be one of: {allowed_list}"
@@ -129,6 +134,30 @@ def is_table_header(line: str) -> bool:
     return stripped.startswith("[") and stripped.endswith("]")
 
 
+def is_mc_publish_header(line: str) -> bool:
+    stripped = strip_inline_comment(line)
+    return stripped.startswith("[mc-publish") or stripped.startswith("[[mc-publish")
+
+
+def extract_mc_publish_block(text: str) -> str | None:
+    lines = text.splitlines()
+    header_indices = [index for index, line in enumerate(lines) if strip_inline_comment(line) == "[mc-publish]"]
+    if not header_indices:
+        return None
+    if len(header_indices) > 1:
+        sys.exit("ERROR: Multiple [mc-publish] tables found in mods.toml")
+
+    start_index = header_indices[0]
+    end_index = len(lines)
+    for index in range(start_index + 1, len(lines)):
+        if is_table_header(lines[index]) and not is_mc_publish_header(lines[index]):
+            end_index = index
+            break
+
+    block_lines = lines[start_index:end_index]
+    return "\n".join(block_lines) + "\n"
+
+
 def build_mc_publish_block(values: dict[str, str], ordered_keys: list[str]) -> list[str]:
     lines = ["[mc-publish]"]
     for key in ordered_keys:
@@ -148,7 +177,7 @@ def update_mc_publish_block(mods_toml: Path, values: dict[str, str], ordered_key
     if start_index is not None:
         end_index = len(lines)
         for index in range(start_index + 1, len(lines)):
-            if is_table_header(lines[index]):
+            if is_table_header(lines[index]) and not is_mc_publish_header(lines[index]):
                 end_index = index
                 break
         block_lines = lines[start_index + 1 : end_index]

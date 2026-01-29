@@ -40,6 +40,7 @@ curseforge_slug = "your-mod-slug"
 ```
 
 `loader` must be `forge`.
+Template placeholders like `${...}` are not allowed in `[mc-publish]` values.
 
 Dependencies are read directly from `mods.toml` by mc-publish. No `dependencies.txt` is used.
 Only Forge is supported; `mods.toml` is required and is the single source of metadata.

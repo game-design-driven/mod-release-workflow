@@ -40,6 +40,39 @@ def find_mods_toml(root: Path) -> Path:
     return paths[0]
 
 
+def strip_inline_comment(line: str) -> str:
+    return line.split("#", 1)[0].strip()
+
+
+def is_table_header(line: str) -> bool:
+    stripped = strip_inline_comment(line)
+    return stripped.startswith("[") and stripped.endswith("]")
+
+
+def is_mc_publish_header(line: str) -> bool:
+    stripped = strip_inline_comment(line)
+    return stripped.startswith("[mc-publish") or stripped.startswith("[[mc-publish")
+
+
+def extract_mc_publish_block(text: str) -> str:
+    lines = text.splitlines()
+    header_indices = [index for index, line in enumerate(lines) if strip_inline_comment(line) == "[mc-publish]"]
+    if not header_indices:
+        fail("Missing [mc-publish] table in mods.toml")
+    if len(header_indices) > 1:
+        fail("Multiple [mc-publish] tables found in mods.toml")
+
+    start_index = header_indices[0]
+    end_index = len(lines)
+    for index in range(start_index + 1, len(lines)):
+        if is_table_header(lines[index]) and not is_mc_publish_header(lines[index]):
+            end_index = index
+            break
+
+    block_lines = lines[start_index:end_index]
+    return "\n".join(block_lines) + "\n"
+
+
 def normalize_value(value: object | None) -> str | None:
     if value is None:
         return None
@@ -51,7 +84,8 @@ def normalize_value(value: object | None) -> str | None:
 
 def read_metadata(mods_toml: Path) -> dict[str, str]:
     try:
-        data = tomllib.loads(mods_toml.read_text())
+        block_text = extract_mc_publish_block(mods_toml.read_text())
+        data = tomllib.loads(block_text)
     except tomllib.TOMLDecodeError as exc:
         fail(f"Invalid TOML in {mods_toml}: {exc}")
 
@@ -70,6 +104,8 @@ def read_metadata(mods_toml: Path) -> dict[str, str]:
         if value is None:
             missing.append(key)
             continue
+        if "${" in value:
+            fail(f"[mc-publish].{key} contains a template placeholder: {value}")
         values[key] = value
 
     if missing:
